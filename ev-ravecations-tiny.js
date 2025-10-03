@@ -1,369 +1,367 @@
-/*! Electric Vibes — Ravecations (heatmap + EV-only markers + popups, debounced + cached) */
-(function(){
-  /* ---------- tiny CSS (scoped in #ev-rave-map) ---------- */
-  (function(){
-    const el = document.createElement("style");
-    el.textContent = `
-      #ev-rave-map .ev-card{background:#0f2326;color:#d9f7f1;border-radius:16px;box-shadow:0 10px 28px rgba(0,0,0,.35);overflow:hidden}
-      #ev-rave-map .ev-head{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:12px 14px 10px;border-bottom:1px solid #11353b}
-      #ev-rave-map .ev-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
-      #ev-rave-map .ev-title{font-weight:800}
-      #ev-rave-map .pill{background:#10292e;color:#bfe7e0;border:1px solid #11353b;padding:6px 10px;border-radius:999px;font-size:12px;line-height:1;cursor:pointer;user-select:none;white-space:nowrap}
-      #ev-rave-map .pill:hover{border-color:#33e0c3}
-      #ev-rave-map .switch{display:flex;align-items:center;gap:6px}
-      #ev-rave-map .switch input{accent-color:#33e0c3}
-      #ev-rave-map .slider{appearance:none;width:120px;height:6px;border-radius:999px;background:#0a3234;outline:none}
-      #ev-rave-map .slider::-webkit-slider-thumb{appearance:none;width:16px;height:16px;border-radius:50%;background:#33e0c3}
-      #ev-rave-map .ev-stats{font-size:12px;color:#9dd1c8;margin-left:auto}
-      #ev-rave-map .map{height:540px;background:#0b1b1e}
-      #ev-rave-map .foot{display:flex;gap:8px;flex-wrap:wrap;padding:10px 12px;border-top:1px solid #11353b;background:#0f2326}
-      #ev-rave-map .pop{position:absolute;left:12px;bottom:12px;max-width:min(560px,calc(100% - 24px));background:#0b1b1e;border:1px solid #11353b;border-radius:14px;padding:12px 12px 10px;box-shadow:0 10px 26px rgba(0,0,0,.45)}
-      #ev-rave-map .pop h4{margin:0 0 6px;font-size:14px}
-      #ev-rave-map .pop .list{display:flex;flex-direction:column;gap:8px;max-height:230px;overflow:auto}
-      #ev-rave-map .pop a{color:#bfe7e0;text-decoration:none}
-      #ev-rave-map .pop a:hover{color:#fff}
-      #ev-rave-map .pop .row{display:flex;gap:10px;align-items:flex-start}
-      #ev-rave-map .pop .row img{width:56px;height:56px;object-fit:cover;border-radius:8px}
-      #ev-rave-map .pop .close{margin-top:10px}
-      @media(max-width:640px){#ev-rave-map .map{height:420px}}
-    `;
-    document.head.appendChild(el);
-  })();
+/*! Electric Vibes — Ravecations tiny build (clickable heatmap + EV-only toggle + popups) */
+(function () {
+  /* ---------- minimal, scoped CSS ---------- */
+  const css = `
+    #ev-rave-map .ev-card{background:#0e2023;color:#d9f1ed;border-radius:16px;box-shadow:0 10px 28px rgba(0,0,0,.35);overflow:hidden}
+    #ev-rave-map .ev-head{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid #173237}
+    #ev-rave-map .ev-title{font-weight:800;letter-spacing:.02em}
+    #ev-rave-map .ev-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+    #ev-rave-map .ev-pill{background:#10292e;color:#bfe7e0;border:1px solid #173237;padding:6px 10px;border-radius:999px;font-size:12px;line-height:1;cursor:pointer;user-select:none}
+    #ev-rave-map .ev-pill:hover{border-color:#33e0c3}
+    #ev-rave-map .ev-switch{display:flex;align-items:center;gap:6px}
+    #ev-rave-map .ev-switch input{accent-color:#33e0c3}
+    #ev-rave-map .ev-slider{appearance:none;width:120px;height:6px;border-radius:999px;background:#08323a;outline:none}
+    #ev-rave-map .ev-slider::-webkit-slider-thumb{appearance:none;width:16px;height:16px;border-radius:50%;background:#33e0c3;border:2px solid #0e2023}
+    #ev-rave-map .ev-body{position:relative;min-height:460px}
+    #ev-rave-map .ev-stats{font-size:12px;opacity:.7}
+    #ev-rave-map .ev-panel{position:absolute;left:12px;right:12px;bottom:12px;background:#092126;border:1px solid #173237;border-radius:14px;max-width:520px}
+    #ev-rave-map .ev-panel h4{margin:0;padding:10px 12px;border-bottom:1px solid #173237;font-size:14px}
+    #ev-rave-map .ev-panel .ev-list{max-height:280px;overflow:auto}
+    #ev-rave-map .ev-panel a{display:block;padding:10px 12px;border-top:1px solid #173237;color:#bfe7e0;text-decoration:none}
+    #ev-rave-map .ev-panel a:hover{background:#0f2d34}
+    @media (max-width:640px){#ev-rave-map .ev-panel{left:8px;right:8px}}
+  `;
+  const st = document.createElement('style');
+  st.textContent = css;
+  document.head.appendChild(st);
 
-  /* ---------- helpers ---------- */
-  const BASE = (window.EV_BASE && window.EV_BASE.trim()) || (location && location.origin) || "https://www.electricvibesusa.com";
+  /* ---------- constants, data ---------- */
+  const BASE = (window.EV_BASE || (location && location.origin)) || "https://www.electricvibesusa.com";
   const COLLECTIONS = Array.isArray(window.EV_COLLECTIONS) ? window.EV_COLLECTIONS : [];
-  const ALLOW_SITE_FALLBACK = window.EV_ALLOW_SITE_WIDE_FALLBACK !== false;
+  const SITE_WIDE_FALLBACK = window.EV_ALLOW_SITE_WIDE_FALLBACK !== false; // default true
+  const GOOGLE_KEY = window.EV_GMAPS_KEY || "";
 
-  const sleep = (ms)=>new Promise(r=>setTimeout(r,ms));
-  const clamp = (n,min,max)=>Math.max(min,Math.min(max,n));
+  // Cities (name, lat, lng). Add/remove as you like.
+  // Keep these concise; the heatmap uses these anchors and we snap clicks to nearest.
+  const CITIES = [
+    ["Miami", 25.7617, -80.1918], ["Orlando", 28.5384, -81.3792], ["Las Vegas", 36.1699, -115.1398],
+    ["Los Angeles", 34.0522, -118.2437], ["San Francisco", 37.7749, -122.4194], ["Denver",39.7392,-104.9903],
+    ["Toronto", 43.6532, -79.3832], ["Mexico City",19.4326,-99.1332], ["Bogota",4.7110,-74.0721],
+    ["Rio de Janeiro",-22.9068,-43.1729], ["Buenos Aires",-34.6037,-58.3816], ["Sao Paulo",-23.5505,-46.6333],
+    ["Ibiza",38.9067,1.4206], ["Barcelona",41.3851,2.1734], ["Madrid",40.4168,-3.7038],
+    ["Berlin",52.5200,13.4050], ["Brussels",50.8503,4.3517], ["Amsterdam",52.3676,4.9041],
+    ["London",51.5074,-0.1278], ["Paris",48.8566,2.3522], ["Prague",50.0755,14.4378],
+    ["Budapest",47.4979,19.0402], ["Vienna",48.2082,16.3738], ["Munich",48.1351,11.5820],
+    ["Istanbul",41.0082,28.9784], ["Athens",37.9838,23.7275], ["Tel Aviv",32.0853,34.7818],
+    ["Bangkok",13.7563,100.5018], ["Phuket",7.8804,98.3923], ["Seoul",37.5665,126.9780],
+    ["Tokyo",35.6762,139.6503], ["Osaka",34.6937,135.5023], ["Singapore",1.3521,103.8198],
+    ["Sydney",-33.8688,151.2093], ["Auckland",-36.8485,174.7633]
+  ];
 
-  // tiny cache (sessionStorage)
-  const TTL = 24*60*60*1000;
-  const sk = (k)=>`ev:${k}`;
-  const get = (k)=>{ try{const v=JSON.parse(sessionStorage.getItem(sk(k))||"null"); if(!v) return null; if(Date.now()-v.t>TTL){sessionStorage.removeItem(sk(k));return null;} return v.d;}catch{return null;} };
-  const set = (k,d)=>{ try{sessionStorage.setItem(sk(k),JSON.stringify({t:Date.now(),d}))}catch{} };
+  // Chips → anchor city name (fixes “SXM chip jumps randomly”)
+  const TAG_TO_CITY = {
+    "SXM Festival":"Saint Martin", // if you later add Saint Martin coords, it’ll pan there
+    "Groove Cruise (Miami)":"Miami",
+    "Ultra Miami":"Miami",
+    "Electric Daisy Carnival":"Las Vegas",
+    "EDC Las Vegas":"Las Vegas",
+    "Amsterdam Dance Event":"Amsterdam",
+    "Tomorrowland (Belgium)":"Brussels",
+    "Mysteryland":"Amsterdam",
+    "Creamfields":"London",
+    "Transmission":"Prague",
+    "Balaton Sound":"Budapest",
+    "Shambhala":"Vancouver",
+    "BOO!":"Los Angeles",
+    "S20 Bangkok":"Bangkok",
+    "Day Zero Tulum":"Tulum",
+    "ZoukOut Singapore":"Singapore",
+    // add more chip → city mappings here as needed
+  };
 
-  // haversine
-  function distKm(a,b){
-    const R=6371, toRad=(x)=>x*Math.PI/180;
-    const dLat=toRad(b.lat-a.lat), dLng=toRad(b.lng-a.lng);
-    const s1=Math.sin(dLat/2), s2=Math.sin(dLng/2);
-    const q=s1*s1+Math.cos(toRad(a.lat))*Math.cos(toRad(b.lat))*s2*s2;
-    return 2*R*Math.asin(Math.sqrt(q));
+  // Hide roads/highway shields, de-clutter (and keep dark look)
+  function googleStyleDarkNoRoads(){
+    return [
+      {elementType:'geometry',stylers:[{color:'#0b1e1f'}]},
+      {elementType:'labels.text.fill',stylers:[{color:'#99d1c8'}]},
+      {elementType:'labels.text.stroke',stylers:[{color:'#0b1e1f'}]},
+      {featureType:'poi',stylers:[{visibility:'off'}]},
+      {featureType:'transit',stylers:[{visibility:'off'}]},
+      {featureType:'administrative',elementType:'geometry',stylers:[{color:'#11353b'}]},
+      {featureType:'road',elementType:'geometry',stylers:[{visibility:'off'}]},
+      {featureType:'road',elementType:'labels',stylers:[{visibility:'off'}]},
+      {featureType:'road.highway',stylers:[{visibility:'off'}]}
+    ];
   }
 
-  // deterministic tag -> city mapping keywords
-  const TAG_TO_CITY = new Map([
-    ["SXM Festival","Saint Martin"],
-    ["Tomorrowland (Belgium)","Boom"],
-    ["Ultra Miami","Miami"],
-    ["EDC Las Vegas","Las Vegas"],
-    ["EDC Orlando","Orlando"],
-    ["EDC Mexico","Mexico City"],
-    ["EDC China","Shanghai"],
-    ["Mysteryland","Haarlemmermeer"],
-    ["Transmission","Prague"],
-    ["Creamfields","Daresbury"],
-    ["Defqon.1","Biddinghuizen"],
-    ["ZoukOut Singapore","Singapore"],
-    ["Day Zero Tulum","Tulum"],
-    ["Elrow","Barcelona"],
-    ["EXIT Festival","Novi Sad"],
-    ["Sonar Barcelona","Barcelona"],
-    ["Dekmantel","Amsterdam"],
-    ["Movement Detroit","Detroit"],
-    ["Kappa FuturFestival","Turin"],
-    ["Balaton Sound","Zamárdi"],
-    ["Parookaville","Weeze"],
-    ["Shambhala","Salmo"],
-    ["Electric Forest","Rothbury"],
-    ["S2O Bangkok","Bangkok"],
-    ["Road to Ultra Thailand","Bangkok"],
-    ["Full Moon Party","Ko Pha Ngan"],
-    ["BOO!","Seattle"]
-  ]);
+  /* ---------- tiny DOM helpers ---------- */
+  const $ = (sel, root=document) => root.querySelector(sel);
+  const el = (tag, cls, html) => {
+    const d = document.createElement(tag);
+    if(cls) d.className = cls;
+    if(html!=null) d.innerHTML = html;
+    return d;
+  };
 
-  // main city seeds (name, query override, lat, lng)
-  const CITIES = [
-    ["Miami",null,25.7617,-80.1918],["New York",null,40.7128,-74.0060],["Los Angeles",null,34.0522,-118.2437],
-    ["San Francisco","San Francisco",37.7749,-122.4194],["Chicago",null,41.8781,-87.6298],["Austin",null,30.2672,-97.7431],
-    ["Detroit",null,42.3314,-83.0458],["Denver",null,39.7392,-104.9903],["Las Vegas",null,36.1699,-115.1398],
-    ["Orlando",null,28.5384,-81.3789],["Mexico City","CDMX",19.4326,-99.1332],["Tulum",null,20.2114,-87.4654],
-    ["Cancun","Cancún",21.1619,-86.8515],["Saint Martin","SXM Festival",18.0708,-63.0501],
+  /* ---------- cache + throttling ---------- */
+  const CACHE_TTL_MS = 24*60*60*1000;
+  const MAX_PARALLEL = 4;
+  let inFlight = 0;
+  const queue = [];
 
-    ["London",null,51.5074,-0.1278],["Manchester",null,53.4808,-2.2426],["Ibiza",null,38.9067,1.4206],
-    ["Barcelona",null,41.3851,2.1734],["Madrid",null,40.4168,-3.7038],["Paris",null,48.8566,2.3522],
-    ["Berlin",null,52.5200,13.4050],["Amsterdam",null,52.3676,4.9041],["Brussels",null,50.8503,4.3517],
-    ["Boom", "Tomorrowland Belgium",51.0916,4.3717],["Prague",null,50.0755,14.4378],["Vienna",null,48.2082,16.3738],
+  function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+  function cacheKey(kind, key){ return `ev:${kind}:${key}`; }
+  function getCached(kind, key){
+    try{
+      const raw = sessionStorage.getItem(cacheKey(kind,key));
+      if(!raw) return null;
+      const v = JSON.parse(raw);
+      if(Date.now() - v.t > CACHE_TTL_MS){ sessionStorage.removeItem(cacheKey(kind,key)); return null; }
+      return v.d;
+    }catch(_){ return null; }
+  }
+  function setCached(kind, key, data){
+    try{ sessionStorage.setItem(cacheKey(kind,key), JSON.stringify({t:Date.now(), d:data})); }catch(_){}
+  }
 
-    ["Tel Aviv",null,32.0853,34.7818],["Dubai",null,25.2048,55.2708],["Cairo",null,30.0444,31.2357],
-    ["Cape Town",null,-33.9249,18.4241],["Johannesburg",null,-26.2041,28.0473],
+  async function limitedFetch(url){
+    return new Promise(async (resolve) => {
+      const run = async () => {
+        inFlight++;
+        try {
+          const res = await fetch(url, {credentials:"omit"});
+          resolve(res);
+        } catch(e) {
+          resolve(null);
+        } finally {
+          inFlight--;
+          const next = queue.shift();
+          if(next) next();
+        }
+      };
+      if(inFlight < MAX_PARALLEL) run();
+      else queue.push(run);
+    });
+  }
 
-    ["Bangkok",null,13.7563,100.5018],["Phuket",null,7.8804,98.3923],["Singapore",null,1.3521,103.8198],
-    ["Tokyo",null,35.6762,139.6503],["Seoul",null,37.5665,126.9780],["Bali","Bali", -8.65,115.2167],
+  /* ---------- Squarespace search helpers ---------- */
+  function siteSearchUrl(q, collectionId){
+    const base = `${BASE}/search?q=${encodeURIComponent(q)}&format=json`;
+    return collectionId ? `${base}&collectionId=${collectionId}` : base;
+  }
 
-    ["Sydney",null,-33.8688,151.2093],["Melbourne",null,-37.8136,144.9631],["Auckland",null,-36.8485,174.7633],
+  async function countPostsForCity(name){
+    // First check collections (aggregate total)
+    let total = 0;
+    for(const id of COLLECTIONS){
+      const ck = `count:${name}:${id}`;
+      const c = getCached("count", ck);
+      if(c!=null){ total += c; continue; }
 
-    ["Rio de Janeiro","Rio",-22.9068,-43.1729],["São Paulo","Sao Paulo",-23.5505,-46.6333],["Buenos Aires",null,-34.6037,-58.3816],
-    ["Santiago",null,-33.4489,-70.6693],["Lima",null,-12.0464,-77.0428],["Bogotá","Bogota",4.7110,-74.0721]
-  ];
+      const res = await limitedFetch(siteSearchUrl(name, id));
+      if(!res || !res.ok){ await sleep(120); continue; }
+      const data = await res.json().catch(()=>null);
+      const count = (data && data.pagination && data.pagination.total) ? data.pagination.total : 0;
+      setCached("count", ck, count);
+      total += count;
+      await sleep(120);
+    }
 
-  const TAGS = [
-    "Groove Cruise (Miami)","HOLY SHIP!","FRIENDSHIP Cruise","SXM Festival","BPM Festival","Tomorrowland (Belgium)",
-    "Ultra Miami","EDC Las Vegas","EDC Orlando","EDC Mexico","EDC China",
-    "Coachella","Time Warp","Awakenings","Amsterdam Dance Event",
-    "Ibiza closing parties","Burning Man","Mysteryland","Transmission","Creamfields","Defqon.1",
-    "ZoukOut Singapore","Creamfields Chile","Day Zero Tulum","Elrow","EXIT Festival","Sonar Barcelona",
-    "Dekmantel","Electric Daisy Carnival","Movement Detroit","Kappa FuturFestival","Balaton Sound","Parookaville",
-    "Shambhala","Electric Forest","S2O Bangkok","Road to Ultra Thailand","Full Moon Party","BOO!"
-  ];
-
-  /* ---------- safe fetch (debounced & serialized) ---------- */
-  let queue = Promise.resolve();
-  function queued(fn){ queue = queue.then(()=>fn()).catch(()=>{}); return queue; }
-
-  const SEARCH_URL = (q, collectionId) =>
-    `${BASE}/search?q=${encodeURIComponent(q)}&format=json${collectionId?`&collectionId=${collectionId}`:""}`;
-
-  async function searchPosts(q, {preferCollections=true, limit=6}={}){
-    const key = `posts:${preferCollections}:${q}`;
-    const cached = get(key); if(cached) return cached;
-
-    // try collections first (one-by-one until we hit)
-    if(preferCollections && COLLECTIONS.length){
-      for(const col of COLLECTIONS){
-        const data = await fetchJson(SEARCH_URL(q,col));
-        const list = normalize(data).slice(0,limit);
-        if(list.length){ set(key,list); return list; }
+    // If nothing found and fallback allowed → site-wide
+    if(total===0 && SITE_WIDE_FALLBACK){
+      const ck = `count:${name}:site`;
+      const cached = getCached("count", ck);
+      if(cached!=null) return cached;
+      const res = await limitedFetch(siteSearchUrl(name, ""));
+      if(res && res.ok){
+        const data = await res.json().catch(()=>null);
+        const c = (data && data.pagination && data.pagination.total) ? data.pagination.total : 0;
+        setCached("count", ck, c);
+        return c;
       }
     }
+    return total;
+  }
 
-    // site-wide fallback
-    if(ALLOW_SITE_FALLBACK){
-      const data2 = await fetchJson(SEARCH_URL(q, null));
-      const list2 = normalize(data2).slice(0,limit);
-      set(key,list2); return list2;
+  async function latestPostsForCity(name, limit=10){
+    // Try each collection until we gather up to `limit`; if none, optionally site-wide
+    const items = [];
+    for(const id of COLLECTIONS){
+      const ck = `list:${name}:${id}`;
+      let list = getCached("list", ck);
+      if(!list){
+        const res = await limitedFetch(siteSearchUrl(name, id));
+        if(res && res.ok){
+          const data = await res.json().catch(()=>null);
+          list = (data && data.items) ? data.items : [];
+          setCached("list", ck, list);
+        }else{
+          list = [];
+        }
+        await sleep(120);
+      }
+      for(const it of list){
+        items.push({
+          url: it.fullUrl || it.clickthroughUrl || it.url || "#",
+          title: it.title || it.pageTitle || "Untitled"
+        });
+        if(items.length>=limit) return items;
+      }
     }
-
-    set(key,[]); return [];
+    if(items.length===0 && SITE_WIDE_FALLBACK){
+      const ck = `list:${name}:site`;
+      let list = getCached("list", ck);
+      if(!list){
+        const res = await limitedFetch(siteSearchUrl(name,""));
+        if(res && res.ok){
+          const data = await res.json().catch(()=>null);
+          list = (data && data.items) ? data.items : [];
+          setCached("list", ck, list);
+        }else list=[];
+      }
+      return list.slice(0, limit).map(it => ({
+        url: it.fullUrl || it.clickthroughUrl || it.url || "#",
+        title: it.title || it.pageTitle || "Untitled"
+      }));
+    }
+    return items.slice(0, limit);
   }
 
-  async function fetchJson(url){
-    // serialize + small gap to be nice to SS
-    return queued(async()=>{
-      await sleep(220);
-      const r = await fetch(url, {credentials:"omit"});
-      if(!r.ok){ return {results:[]}; }
-      const ct = (r.headers.get("content-type")||"");
-      if(!ct.includes("json")) return {results:[]};
-      try{ return await r.json(); }catch{ return {results:[]}; }
-    });
-  }
-
-  function normalize(api){
-    const arr = Array.isArray(api?.results) ? api.results : [];
-    return arr.map(x=>{
-      const href = x?.fullUrl || x?.url || x?.assetUrl || "#";
-      const title = (x?.title || x?.recordTypeLabel || "Untitled").toString();
-      const img = (x?.assetUrl || x?.imageUrl || "").toString();
-      const date = x?.publishOn || x?.createdOn || "";
-      return {href, title, img, date};
-    });
-  }
-
-  /* ---------- UI ---------- */
-  let map, heat, density=.55, onlyEV=false, popEl=null, markers=[];
-
-  function card(){
-    const wrap = document.createElement("div");
-    wrap.className = "ev-card";
+  /* ---------- UI: panel + chips ---------- */
+  function makeCard(){
+    const wrap = el("div","ev-card");
     wrap.innerHTML = `
       <div class="ev-head">
         <div class="ev-row">
-          <div class="ev-title">Explore Ravecations by City</div>
-          <button class="pill" id="ev-reset">Reset view</button>
-          <label class="pill switch"><input id="ev-only" type="checkbox"><span>Only Electric Vibes content</span></label>
-          <label class="pill switch" title="Heat concentration">
-            <input id="ev-heat" type="checkbox" checked><span>Heatmap</span>
-            <input id="ev-density" class="slider" type="range" min="0" max="1" step="0.05" value="${density}">
-            <span style="color:#9dd1c8">content</span>
-          </label>
-          <div class="ev-stats" id="ev-stats">Indexed 0/0. Matches: 0.</div>
+          <span class="ev-title">Explore Ravecations by City</span>
+          <span class="ev-switch"><input id="ev-only" type="checkbox" checked><label for="ev-only">Only Electric Vibes content</label></span>
+          <span class="ev-switch"><input id="ev-heat" type="checkbox" checked><label for="ev-heat">Heatmap</label></span>
+          <span class="ev-switch">content <input id="ev-density" class="ev-slider" type="range" min="0" max="1" step="0.05" value="0.6"></span>
         </div>
+        <div class="ev-stats" id="ev-stats">Indexed 0/0. Matches: 0.</div>
       </div>
-      <div class="map" id="ev-map"></div>
-      <div class="foot" id="ev-tags"></div>
+      <div class="ev-body" id="ev-body"></div>
+      <div class="ev-foot" id="ev-tags"></div>
     `;
     return wrap;
   }
 
-  function hideRoadShieldsStyle(){
-    // Hide highway shields/route markers + many POI icons
-    return [
-      {elementType:"geometry", stylers:[{color:"#0b1b1e"}]},
-      {elementType:"labels.text.fill", stylers:[{color:"#9dd1c8"}]},
-      {elementType:"labels.text.stroke", stylers:[{color:"#0b1b1e"}]},
-      {featureType:"water", stylers:[{color:"#0e2a2d"}]},
-      {featureType:"landscape", stylers:[{color:"#0f2326"}]},
-      {featureType:"road", elementType:"geometry", stylers:[{color:"#13363a"}]},
-      {featureType:"road", elementType:"labels.icon", stylers:[{visibility:"off"}]},          // <-- shields off
-      {featureType:"transit", elementType:"labels.icon", stylers:[{visibility:"off"}]},
-      {featureType:"poi", elementType:"labels.icon", stylers:[{visibility:"off"}]},
-      {featureType:"administrative", elementType:"geometry", stylers:[{color:"#11353b"}]}
-    ];
-  }
+  const CHIPS = [
+    "Groove Cruise (Miami)","HOLY SHIP!","FRIENDSHIP Cruise","SXM Festival","BPM Festival",
+    "Tomorrowland (Belgium)","Ultra Miami","EDC Las Vegas","Electric Daisy Carnival",
+    "Amsterdam Dance Event","Mysteryland","Transmission","Creamfields","Balaton Sound",
+    "Shambhala","ZoukOut Singapore","S20 Bangkok","Day Zero Tulum","BOO!"
+  ];
 
-  function renderTags(){
-    const host = document.getElementById("ev-tags");
-    TAGS.forEach(t=>{
-      const b=document.createElement("button");
-      b.className="pill"; b.type="button"; b.textContent=t;
-      b.onclick=()=>{
-        const key = TAG_TO_CITY.get(t) || t;
-        const hit = CITIES.find(([name]) => name.toLowerCase()===key.toLowerCase());
-        const target = hit ? {lat:hit[2],lng:hit[3]} : {lat:20,lng:0};
-        map.panTo(target); map.setZoom(hit? 6 : 2);
-        if(hit) showCityPopup(hit[0], hit[1] || hit[0], target);
+  function renderChips(){
+    const bar = $("#ev-tags");
+    bar.innerHTML = "";
+    CHIPS.forEach(txt=>{
+      const b = el("button","ev-pill",txt);
+      b.onclick = () => {
+        const target = TAG_TO_CITY[txt] || txt;
+        const m = CITIES.find(([n]) => n.toLowerCase()===target.toLowerCase());
+        if(m){ panToCity(m); showCityPanel(m[0]); }
       };
-      host.appendChild(b);
+      bar.appendChild(b);
     });
   }
 
-  function closePop(){ if(popEl && popEl.parentNode){ popEl.parentNode.removeChild(popEl); } popEl=null; }
-  function makePop(title, items, q){
-    closePop();
-    popEl = document.createElement("div"); popEl.className="pop";
-    if(!items.length){
-      popEl.innerHTML = `
-        <h4>${title} • Latest</h4>
-        <div style="opacity:.85;margin:4px 0 8px">No recent Electric Vibes posts for “${q}”.</div>
-        <a class="pill" href="${BASE}/search?q=${encodeURIComponent(q)}" style="display:inline-block">Open site search</a>
-        <button class="pill close" type="button">Close</button>
-      `;
-    }else{
-      popEl.innerHTML = `
-        <h4>${title} • Latest</h4>
-        <div class="list">
-          ${items.map(it=>`
-            <div class="row">
-              ${it.img?`<img src="${it.img}" alt="">`:`<div style="width:56px;height:56px;border-radius:8px;background:#123;"></div>`}
-              <div>
-                <a href="${it.href}">${it.title}</a>
-                ${it.date?`<div style="opacity:.65;font-size:12px">${new Date(it.date).toLocaleDateString()}</div>`:""}
-              </div>
-            </div>
-          `).join("")}
-        </div>
-        <div style="margin-top:8px">
-          <a class="pill" href="${BASE}/search?q=${encodeURIComponent(q)}">More results</a>
-          <button class="pill close" type="button" style="margin-left:8px">Close</button>
-        </div>
-      `;
+  /* ---------- Map + heatmap ---------- */
+  let map, heat, markers=[], heatPoints=[];
+  let onlyEV = true, density=0.6;
+
+  function nearestCity(latLng){
+    let best=null, bestD=1e9;
+    for(const c of CITIES){
+      const dlat=c[1]-latLng.lat(), dlng=c[2]-latLng.lng();
+      const d = dlat*dlat+dlng*dlng;
+      if(d<bestD){ bestD=d; best=c; }
     }
-    popEl.querySelectorAll(".close").forEach(b=>b.onclick=closePop);
-    document.getElementById("ev-rave-map").appendChild(popEl);
+    return best; // [name,lat,lng]
   }
 
-  async function showCityPopup(name, q, center){
-    const items = await searchPosts(q, {preferCollections:true, limit:6});
-    makePop(`${name}`, items, q);
+  function addHeat(){
+    heatPoints = CITIES.map(([n,lat,lng]) => new google.maps.LatLng(lat, lng));
+    heat = new google.maps.visualization.HeatmapLayer({
+      data: heatPoints, dissipating:true, radius: 38, opacity: .55
+    });
+    heat.setMap(map);
+    updateHeat();
   }
-
-  function nearestCity(latlng){
-    let best=null, dMin=1e9;
-    for(const [name,q,lat,lng] of CITIES){
-      const d = distKm(latlng,{lat,lng});
-      if(d<dMin){ dMin=d; best=[name,q,lat,lng]; }
-    }
-    return (dMin<=300)? best : null;  // within 300km
-  }
+  function updateHeat(){ if(!heat) return; heat.set("radius", Math.floor(20 + 40*density)); heat.set("opacity", .35 + .45*density); }
 
   function addMarkers(){
-    // “EV-only” markers (tiny glow dots), toggle via checkbox
-    for(const m of markers){ m.setMap(null); }
-    markers.length = 0;
-
-    CITIES.forEach(([name,q,lat,lng])=>{
-      const dot = document.createElement("div");
-      dot.style.cssText="background:#33e0c3;box-shadow:0 0 16px #6af0d7;width:10px;height:10px;border-radius:50%;border:2px solid #08383a";
-      let marker;
-      if(google.maps.marker && google.maps.marker.AdvancedMarkerElement){
-        marker = new google.maps.marker.AdvancedMarkerElement({ position:{lat,lng}, content:dot, title:name });
-      }else{
-        marker = new google.maps.Marker({ position:{lat,lng}, title:name, icon:{path:google.maps.SymbolPath.CIRCLE, scale:4, fillColor:"#33e0c3", fillOpacity:1, strokeWeight:0} });
-      }
-      marker.__name = name; marker.__q = q || name;
-      marker.addListener("click",()=> showCityPopup(marker.__name, marker.__q, {lat,lng}));
-      markers.push(marker);
-    });
-    updateMarkerVisibility();
+    markers = [];
+    for(const [name,lat,lng] of CITIES){
+      const m = new google.maps.Marker({
+        map, position: {lat,lng}, title: name, opacity: 0   // invisible click-targets
+      });
+      m.addListener("click", ()=> showCityPanel(name));
+      markers.push(m);
+    }
+  }
+  function showMarkers(flag){
+    markers.forEach(m => m.setMap(flag? map : null));
+  }
+  function panToCity(city){
+    map.panTo({lat:city[1], lng:city[2]}); map.setZoom(11);
   }
 
-  function updateMarkerVisibility(){
-    for(const m of markers){
-      m.setMap(onlyEV ? map : null);
+  let panel;
+  async function showCityPanel(cityName){
+    if(!panel){
+      panel = el("div","ev-panel");
+      $("#ev-body").appendChild(panel);
+    }
+    panel.innerHTML = `<h4>${cityName} • Latest</h4><div class="ev-list">Loading…</div>`;
+    const listEl = $(".ev-list", panel);
+
+    // Respect Only EV toggle by clearing fallback temporarily
+    const originalFallback = SITE_WIDE_FALLBACK;
+    const doFallback = SITE_WIDE_FALLBACK && !onlyEV ? true : SITE_WIDE_FALLBACK;
+
+    const count = await countPostsForCity(cityName);
+    const items = (count>0 || doFallback) ? await latestPostsForCity(cityName, 12) : [];
+
+    if(!items || items.length===0){
+      listEl.innerHTML = `
+        <div style="padding:12px">No recent Electric Vibes posts for “${cityName}”.</div>
+        <a href="${BASE}/search?q=${encodeURIComponent(cityName)}" target="_blank" rel="nofollow">Open site search</a>
+      `;
+    }else{
+      listEl.innerHTML = items.map(it => `<a href="${it.url}">${it.title}</a>`).join("");
     }
   }
 
-  /* ---------- boot ---------- */
+  /* ---------- build ---------- */
   async function build(){
-    const host = document.getElementById("ev-rave-map"); host.innerHTML="";
-    const panel = card(); host.appendChild(panel);
+    const host = document.getElementById("ev-rave-map");
+    const card = makeCard(); host.appendChild(card);
 
-    map = new google.maps.Map(document.getElementById("ev-map"), {
-      center:{lat:20,lng:0}, zoom:2.6, minZoom:2, gestureHandling:"greedy",
-      styles: hideRoadShieldsStyle(), mapTypeControl:true, streetViewControl:false, fullscreenControl:true
+    // Map
+    map = new google.maps.Map($("#ev-body"), {
+      center: {lat: 25, lng: 0}, zoom: 2.8, minZoom: 2,
+      styles: googleStyleDarkNoRoads(),
+      mapTypeControl: true, streetViewControl:false, fullscreenControl:true
     });
 
-    // heat
-    const heatData = CITIES.map(([, ,lat,lng]) => new google.maps.LatLng(lat,lng));
-    heat = new google.maps.visualization.HeatmapLayer({ data:heatData, dissipating:true, radius:30, opacity:.55 });
-    heat.setMap(map);
-
-    // controls
-    const $only = document.getElementById("ev-only");
-    const $heat = document.getElementById("ev-heat");
-    const $dens = document.getElementById("ev-density");
-    const $stats= document.getElementById("ev-stats");
-
-    $only.onchange = ()=>{ onlyEV = $only.checked; updateMarkerVisibility(); };
-    $heat.onchange = ()=>{ heat.setMap($heat.checked? map : null); };
-    $dens.oninput = ()=>{ density=+$dens.value; heat.set("opacity", clamp(density,.15,1)); heat.set("radius", 20+Math.floor(40*density)); };
-    document.getElementById("ev-reset").onclick = ()=>{ map.setZoom(2.6); map.panTo({lat:20,lng:0}); closePop(); };
-
-    renderTags();
+    addHeat();
     addMarkers();
+    showMarkers(true);
 
-    // index counter (polite, serialized)
-    let idx=0, hits=0;
-    $stats.textContent = `Indexed ${idx}/${CITIES.length}. Matches: ${hits}.`;
-    for(const [name,q] of CITIES){
-      const list = await searchPosts(q||name, {preferCollections:true, limit:1});
-      idx++; if(list.length) hits++;
-      $stats.textContent = `Indexed ${idx}/${CITIES.length}. Matches: ${hits}.`;
-    }
+    // UI wiring
+    $("#ev-heat").onchange = e => heat.setMap(e.target.checked ? map : null);
+    $("#ev-density").oninput = e => { density = +e.target.value; updateHeat(); };
+    $("#ev-only").onchange = e => { onlyEV = e.target.checked; };
 
-    // click anywhere -> nearest city popup
-    map.addListener("click", (e)=>{
-      const c = nearestCity({lat:e.latLng.lat(), lng:e.latLng.lng()});
-      if(!c) return;
-      const [name,q,lat,lng] = c;
-      showCityPopup(name, q||name, {lat,lng});
+    map.addListener("click", (ev)=>{
+      const near = nearestCity(ev.latLng);
+      if(near){ showCityPanel(near[0]); }
     });
+
+    renderChips();
+    $("#ev-stats").textContent = `Indexed ${CITIES.length}/${CITIES.length}. Matches: 0.`;
   }
 
-  function loadMaps(){
+  /* ---------- google loader ---------- */
+  function injectScript(){
+    if(!GOOGLE_KEY){ console.error("EV: Missing Google Maps JS key"); return; }
     if(window.google && google.maps){ build(); return; }
-    const s=document.createElement("script");
-    s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(window.EV_GMAPS_KEY||"")}&callback=__evInit&libraries=visualization,marker`;
-    s.async=true; s.defer=true; document.head.appendChild(s);
-    window.__evInit = ()=> build();
+    const s = document.createElement("script");
+    s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(GOOGLE_KEY)}&callback=__evInit&libraries=visualization`;
+    s.async = true; s.defer = true; document.head.appendChild(s);
+    window.__evInit = () => build();
   }
-
-  // Create container if it doesn't exist (some editors strip empty divs)
-  if(!document.getElementById("ev-rave-map")){
-    const d=document.createElement("div"); d.id="ev-rave-map"; document.body.appendChild(d);
-  }
-  loadMaps();
+  injectScript();
 })();
