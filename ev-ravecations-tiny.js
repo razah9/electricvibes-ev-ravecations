@@ -1,231 +1,155 @@
-<!-- ===== Ravecations tiny build (EV news only, roads hidden) ===== -->
-<script>
+// 04_js.html: paste this right under the HTML (same Code Block) or Page Footer
 (function(){
-  const BASE   = (window.EV_BASE || location.origin || "").replace(/\/$/,"");
-  const KEY    = window.EV_GMAPS_KEY || "";
-  // 👉 only EV news for now (change/add later if you want)
-  const SOURCES= [{ id:"68d4f9094d70f97945b14d6e", path:"/news" }];
-  const DEFAULT_HEAT = window.EV_DEFAULT_HEATMAP !== false;
-  const HIDE_HWY = true;            // force hide highways
-  const CHIP_ZOOM = Number(window.EV_CHIP_ZOOM||6);
+  const MT_KEY = (window.MAPTILER_KEY||"").trim();
+  const STATUS = document.getElementById('ev-status');
+  const chipsBox = document.getElementById('ev-chips');
+  const listEV = document.getElementById('ev-list-ev');
+  const listEDM = document.getElementById('ev-list-edm');
 
-  const CITY_SYNONYMS = Object.fromEntries(
-    Object.entries(window.EV_CITY_SYNONYMS||{}).map(([k,arr]) => [k.toLowerCase(), (arr||[]).map(s=>s.toLowerCase())])
-  );
-
-  // ---- scoped UI css (dark, EV-ish) ----
-  const css = `
-  #ev-rave-map .ev-card{background:#0b1620;color:#d9f1e3;border-radius:16px;box-shadow:0 10px 28px rgba(0,0,0,.35);overflow:hidden;border:1px solid #11353b}
-  #ev-rave-map .ev-head{display:flex;gap:10px;align-items:center;justify-content:space-between;padding:12px 14px 10px;border-bottom:1px solid #133b3b}
-  #ev-rave-map .ev-title{font-weight:800;letter-spacing:.02em}
-  #ev-rave-map .ev-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
-  #ev-rave-map .ev-pill{background:#10292e;color:#bfe1db;border:1px solid #11353b;padding:6px 10px;border-radius:999px;font-size:12px;line-height:1;cursor:pointer;user-select:none;white-space:nowrap}
-  #ev-rave-map .ev-pill:hover{background:#13373f}
-  #ev-rave-map .ev-popup{position:absolute;left:16px;bottom:16px;max-width:min(560px, calc(100% - 32px));z-index:2}
-  #ev-rave-map .ev-popup .ev-body{padding:14px 14px 12px}
-  #ev-rave-map .ev-list{display:flex;flex-direction:column;gap:10px;margin-top:6px}
-  #ev-rave-map .ev-item{display:flex;gap:8px;align-items:flex-start}
-  #ev-rave-map .ev-item a{color:#9fe3ff;text-decoration:none}
-  #ev-rave-map .ev-item a:hover{text-decoration:underline}
-  #ev-rave-map .ev-muted{opacity:.75}
-  #ev-rave-map .ev-meta{font-size:12px;opacity:.75}
-  #ev-rave-map .ev-chips{display:flex;flex-wrap:wrap;gap:8px;margin:10px 4px 0}
-  #ev-rave-map .ev-panel{position:relative;border-radius:16px;background:rgba(11,11,12,.90);backdrop-filter:blur(6px);padding:8px 10px;margin:0 0 8px;border:1px solid #11353b}
-  #ev-rave-map .ev-top{display:flex;align-items:center;gap:10px;justify-content:space-between}
-  `;
-  const style = document.createElement("style"); style.textContent = css; document.head.appendChild(style);
-
-  const ROOT  = document.getElementById("ev-rave-map") || document.body.appendChild(Object.assign(document.createElement("div"),{id:"ev-rave-map"}));
-
-  // ---- Cities (seed) ----
-  const CITIES = [
-    { name:"New York",   center:{lat:40.7128,lng:-74.0060} },
-    { name:"Miami",      center:{lat:25.7617,lng:-80.1918} },
-    { name:"Las Vegas",  center:{lat:36.1699,lng:-115.1398} },
-    { name:"Berlin",     center:{lat:52.52,lng:13.405} },
-    { name:"Brussels",   center:{lat:50.8503,lng:4.3517} },
-    { name:"Amsterdam",  center:{lat:52.3676,lng:4.9041} },
-    { name:"London",     center:{lat:51.5072,lng:-0.1276} },
-    { name:"Ibiza",      center:{lat:38.9089,lng:1.4321} },
-    { name:"Phuket",     center:{lat:7.8804,lng:98.3923} },
-    { name:"Bangkok",    center:{lat:13.7563,lng:100.5018} },
+  const REGIONS = [
+    {k:'na', n:'North America',   b:[[7,-169],[83,-52]]},
+    {k:'latam', n:'Latin America', b:[[-56,-118],[33,-32]]},
+    {k:'eu', n:'Europe',          b:[[34,-31],[72,45]]},
+    {k:'me', n:'Middle East',     b:[[12,25],[42,63]]},
+    {k:'af', n:'Africa',          b:[[-36,-20],[38,52]]},
+    {k:'apac', n:'Asia-Pacific',  b:[[-49,63],[63,179]]},
   ];
 
-  // ---- Map styles: hide all roads + provinces/localities; keep country borders ----
-  const mapStyles = [
-    {featureType:"administrative.province",stylers:[{visibility:"off"}]},
-    {featureType:"administrative.locality",stylers:[{visibility:"off"}]},
-    {featureType:"administrative.neighborhood",stylers:[{visibility:"off"}]},
-    {featureType:"administrative.land_parcel",stylers:[{visibility:"off"}]},
-    {featureType:"poi",stylers:[{visibility:"off"}]},
-    {featureType:"transit",stylers:[{visibility:"off"}]},
-    {featureType:"road",elementType:"all",stylers:[{visibility:"off"}]},
-    // keep country outlines
-    {featureType:"administrative.country",elementType:"geometry.stroke",stylers:[{color:"#7fa0a5"},{weight:1.0}]},
-    // gentle water/land tints to match EV
-    {featureType:"water",stylers:[{color:"#0e3a47"}]},
-    {featureType:"landscape",stylers:[{color:"#0a2a30"}]},
-  ];
+  function fmtDate(s){ if(!s) return ''; return new Date(s).toLocaleDateString(); }
 
-  // debounce
-  const debounce = (fn,ms=250)=>{ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn.apply(null,a),ms); }};
+  // Create map
+  const map = L.map('ev-map',{zoomControl:true, worldCopyJump:true, minZoom:2});
+  const style = "https://api.maptiler.com/maps/backdrop-dark/256/{z}/{x}/{y}.png?key="+encodeURIComponent(MT_KEY||"");
+  L.tileLayer(style, { attribution:'<a>Leaflet</a> | © MapTiler © OpenStreetMap' }).addTo(map);
+  map.setView([20,0], 2);
 
-  // ===== Squarespace collection fetch =====
-  async function fetchCollection(path){
-    const url = `${BASE}${path.replace(/\/$/,"")}?format=json`;
-    const r = await fetch(url, { credentials:"same-origin" });
-    if (!r.ok) throw new Error("fetch fail "+r.status);
-    return r.json();
-  }
+  // Heatmaps
+  const heatCfg = {
+    radius: 24, maxOpacity: 0.55, minOpacity: 0.2, blur: 0.85,
+    scaleRadius: true, useLocalExtrema: false,
+    latField: 'lat', lngField:'lng', valueField:'count'
+  };
+  const evHeat = new HeatmapOverlay(heatCfg).addTo(map);
+  const edmHeat = new HeatmapOverlay(heatCfg); // added when tab is switched
 
-  async function loadAllItems(){
-    const lists = await Promise.allSettled(SOURCES.map(s => fetchCollection(s.path)));
-    const items = [];
-    lists.forEach((res,i)=>{
-      if (res.status==="fulfilled" && res.value && Array.isArray(res.value.items)){
-        const col = SOURCES[i];
-        res.value.items.forEach(it=>{
-          items.push({
-            collectionId: col.id,
-            collectionPath: col.path,
-            url: it.fullUrl || it.url || "",
-            title: it.title || "",
-            excerpt: (it.excerpt||"").replace(/<[^>]+>/g,"").trim(),
-            tags: Array.isArray(it.tags)? it.tags.map(t=>String(t).toLowerCase()) : [],
-            date: it.publishOn || it.updatedOn || it.createdOn || it.postDate || ""
-          });
-        });
-      }
-    });
-    return items;
-  }
+  // Data holders
+  let EV_ITEMS = (window.EV_ITEMS||[]).slice();
+  let EDM_ITEMS = (window.EDM_NEARBY||window.edm_nearby||[]).slice();
+  let activeTab = 'ev'; // 'ev' | 'edm'
 
-  function matchesCity(item, city){
-    const key = city.name.toLowerCase();
-    const hay = `${item.title} ${item.excerpt} ${(item.tags||[]).join(" ")}`.toLowerCase();
-    const syns = [key].concat(CITY_SYNONYMS[key]||[]);
-    return syns.some(s => s && hay.includes(s));
-  }
+  // Expose public helpers
+  window.EV_MAP = {
+    setEV(arr){ EV_ITEMS = Array.isArray(arr)?arr:[]; refreshAll(); },
+    setEDM(arr){ EDM_ITEMS = Array.isArray(arr)?arr:[]; refreshAll(); },
+    refreshLists(){ refreshAll(); }
+  };
 
-  function el(tag, cls, txt){ const e=document.createElement(tag); if(cls)e.className=cls; if(txt)e.textContent=txt; return e; }
-
-  // top panel + chips
-  const panel = el("div","ev-panel");
-  const top = el("div","ev-top");
-  panel.appendChild(top);
-  const leftRow = el("div","ev-row");
-  const rightRow= el("div","ev-row");
-  top.append(leftRow, rightRow);
-  leftRow.appendChild(el("div","ev-title","Explore Ravecations by City"));
-  const chips = el("div","ev-chips"); panel.appendChild(chips);
-  const popup = el("div","ev-popup");
-  ROOT.append(panel,popup);
-
-  // chips from EV_CHIPS (optional)
-  (window.EV_CHIPS||["New York","Miami","Ibiza","Amsterdam","London"]).forEach(label=>{
-    const p = el("div","ev-pill", label);
-    p.addEventListener("click", ()=>{
-      const city = CITIES.find(c => label.toLowerCase().includes(c.name.toLowerCase()) || c.name.toLowerCase().includes(label.toLowerCase())) || CITIES[0];
-      map.panTo(city.center); map.setZoom(CHIP_ZOOM); openCityPopup(city);
-    });
-    chips.appendChild(p);
-  });
-
-  // ===== Map =====
-  let map, heatLayer, allItems = [];
-
-  function buildMap(){
-    map = new google.maps.Map(ROOT, {
-      center: {lat: 25, lng:-20}, zoom: 2, styles: mapStyles,
-      mapTypeControl: true, fullscreenControl:false, streetViewControl:false
-    });
-
-    // soft teal gradient for heat
-    const gradient = [
-      "rgba(0,0,0,0)",
-      "rgba(51,224,195,0.25)",
-      "rgba(51,224,195,0.45)",
-      "rgba(51,224,195,0.70)",
-      "rgba(255,255,255,0.85)"
-    ];
-    const pts = [];
-    CITIES.forEach(c=>{ for(let i=0;i<5;i++) pts.push(new google.maps.LatLng(c.center.lat, c.center.lng)); });
-    heatLayer = new google.maps.visualization.HeatmapLayer({
-      data: pts, radius: 24, gradient, map: DEFAULT_HEAT ? map : null
-    });
-
-    map.addListener("idle", debounce(updateMatches, 200));
-    map.addListener("click", (e)=>{ const city = nearestCity(e.latLng); if (city && distanceMeters(e.latLng, city.center) < 60000) openCityPopup(city); });
-  }
-
-  function distanceMeters(a,b){ const R=6371000,toR=x=>x*Math.PI/180; const dLat=toR(b.lat - a.lat()); const dLng=toR(b.lng - a.lng()); const lat1=toR(a.lat()),lat2=toR(b.lat); const s=Math.sin(dLat/2)**2 + Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLng/2)**2; return 2*R*Math.asin(Math.sqrt(s)); }
-  function nearestCity(ll){ let best=null,d=Infinity; CITIES.forEach(c=>{ const dd=distanceMeters(ll,c.center); if(dd<d){ d=dd; best=c; } }); return best; }
-
-  function openCityPopup(city){
-    const card = el("div","ev-card");
-    const head = el("div","ev-head");
-    head.append(el("div","ev-title", `${city.name} • Latest`));
-    card.appendChild(head);
-    const body = el("div","ev-body");
-    body.appendChild(el("div","ev-muted","Searching recent Electric Vibes posts…"));
-    const actions = el("div","ev-row"); actions.style.marginTop="8px";
-    const openSearch = el("a","ev-pill","Open site search"); openSearch.target="_blank";
-    openSearch.href = `${BASE}/search?q=${encodeURIComponent(city.name)}`;
-    const closeBtn = el("div","ev-pill","Close"); closeBtn.addEventListener("click", ()=> popup.innerHTML="");
-    actions.append(openSearch, closeBtn);
-    card.appendChild(body);
-    popup.innerHTML=""; popup.appendChild(card);
-
-    // Build list
-    const list = el("div","ev-list");
-    const found = allItems
-      .filter(it => matchesCity(it, city))
-      .sort((a,b)=> (new Date(b.date||0)) - (new Date(a.date||0)))
-      .slice(0,6);
-
-    list.innerHTML="";
-    if(found.length){
-      body.firstChild.textContent="";
-      found.forEach(it=>{
-        const row = el("div","ev-item");
-        const link = el("a",null,it.title || "(untitled)");
-        link.href = it.url || (BASE + it.collectionPath); link.target="_blank";
-        row.appendChild(link);
-        if (it.collectionPath) row.appendChild(el("span","ev-meta"," • " + it.collectionPath.replace(/\//g," ").trim()));
-        list.appendChild(row);
+  // Region chips
+  function renderChips(){
+    chipsBox.innerHTML = '';
+    for(const r of REGIONS){
+      const btn = document.createElement('button');
+      btn.className = 'ev-chip'; btn.textContent = r.n;
+      btn.addEventListener('click', ()=>{
+        map.fitBounds(r.b);
+        setActiveChip(r.k);
       });
-      body.insertBefore(list, actions);
-    } else {
-      body.firstChild.textContent = `No recent Electric Vibes posts for “${city.name}”.`;
+      btn.dataset.k = r.k;
+      chipsBox.appendChild(btn);
     }
-    body.appendChild(actions);
+    const reset = document.createElement('button');
+    reset.className = 'ev-chip'; reset.textContent = 'Reset';
+    reset.addEventListener('click', ()=>{ map.setView([20,0],2); setActiveChip(null); });
+    chipsBox.appendChild(reset);
   }
-
-  function updateMatches(){
-    const inView = CITIES.filter(c => { const b=map.getBounds(); return b && b.contains(new google.maps.LatLng(c.center.lat,c.center.lng)); }).length;
-    if(!rightRow._counter){ const c=el("div","ev-muted"); rightRow._counter=c; rightRow.appendChild(c); }
-    rightRow._counter.textContent = `Indexed EV news • Visible hotspots: ${inView}`;
-  }
-
-  // ---- Loader
-  function loadGmaps(){
-    return new Promise((resolve,reject)=>{
-      if(!KEY) return reject(new Error("Missing EV_GMAPS_KEY"));
-      const s=document.createElement("script");
-      s.src=`https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(KEY)}&libraries=visualization`;
-      s.async=true; s.defer=true; s.onload=resolve; s.onerror=()=>reject(new Error("GMAPS load error")); document.head.appendChild(s);
+  function setActiveChip(k){
+    [...chipsBox.querySelectorAll('.ev-chip')].forEach(b=>{
+      b.classList.toggle('active', b.dataset.k===k);
     });
   }
 
-  (async function boot(){
-    try{
-      await loadGmaps();
-      allItems = await loadAllItems();
-      buildMap(); updateMatches();
-    }catch(err){
-      console.error("[EV] init error", err);
-      ROOT.innerHTML = `<div style="color:#fff;background:#300;padding:12px;border-radius:8px">EV Ravecations failed to load: ${err && err.message ? err.message : err}</div>`;
+  // Tabs
+  const tabEV = document.getElementById('ev-tab-ev');
+  const tabEDM = document.getElementById('ev-tab-edm');
+  tabEV.addEventListener('click', ()=>{ activeTab='ev'; tabEV.classList.add('active'); tabEDM.classList.remove('active'); map.removeLayer(edmHeat); if(!map.hasLayer(evHeat)) evHeat.addTo(map); refreshAll(); });
+  tabEDM.addEventListener('click', ()=>{ activeTab='edm'; tabEDM.classList.add('active'); tabEV.classList.remove('active'); map.removeLayer(evHeat); if(!map.hasLayer(edmHeat)) edmHeat.addTo(map); refreshAll(); });
+
+  // Geocode: if item has loc but no g, resolve via MapTiler
+  async function geocodeIfNeeded(items){
+    const out=[];
+    for(const it of items){
+      if(it.g && it.g.length===2){ out.push({...it, _lat:it.g[0], _lng:it.g[1]}); continue; }
+      if(it.loc && MT_KEY){
+        try {
+          const url = `https://api.maptiler.com/geocoding/${encodeURIComponent(it.loc)}.json?limit=1&key=${MT_KEY}`;
+          const res = await fetch(url); if(!res.ok) throw new Error('geo http '+res.status);
+          const js = await res.json();
+          const f = (js.features||[])[0];
+          if(f){ const [lng,lat] = f.center; out.push({...it, _lat:lat, _lng:lng}); continue; }
+        }catch(e){ console.warn('geocode fail', it.loc, e); }
+      }
+      out.push(it); // still push; will be filtered later
     }
-  })();
+    return out;
+  }
+
+  function inBounds(lat,lng,b){ if(!b) return true; return b.contains([lat,lng]); }
+
+  function itemsToHeat(items, bounds){
+    const pts = [];
+    for(const it of items){
+      const lat = it._lat ?? (it.g?it.g[0]:undefined);
+      const lng = it._lng ?? (it.g?it.g[1]:undefined);
+      if(lat==null || lng==null) continue;
+      if(bounds && !inBounds(lat,lng,bounds)) continue;
+      pts.push({lat, lng, count: 1});
+    }
+    return { max: 8, data: pts };
+  }
+
+  function renderList(items, el, bounds){
+    const frag = document.createDocumentFragment();
+    let shown=0;
+    for(const it of items){
+      const lat = it._lat ?? (it.g?it.g[0]:undefined);
+      const lng = it._lng ?? (it.g?it.g[1]:undefined);
+      if(lat!=null && lng!=null && bounds && !inBounds(lat,lng,bounds)) continue;
+      const div = document.createElement('div'); div.className='ev-item';
+      const a = document.createElement('a'); a.href = it.u; a.textContent = it.t||'(no title)';
+      a.target = it.u.startsWith('http')? '_blank':'_self';
+      const small = document.createElement('small');
+      const right = it.d? (' • '+fmtDate(it.d)) : (it.age? (' • '+it.age):'');
+      small.textContent = (it.tag||it.loc||'') + right;
+      div.appendChild(a); div.appendChild(document.createElement('br')); div.appendChild(small);
+      frag.appendChild(div);
+      shown++;
+      if(shown>=20) break;
+    }
+    el.innerHTML=''; el.appendChild(frag);
+  }
+
+  async function refreshAll(){
+    STATUS.textContent = `Ravecations Map • loading…`;
+    // geocode as needed (cache per run)
+    const e1 = await geocodeIfNeeded(EV_ITEMS);
+    const e2 = await geocodeIfNeeded(EDM_ITEMS);
+    const bounds = map.getBounds();
+    // heatmaps
+    evHeat.setData(itemsToHeat(e1, (activeTab==='ev')?bounds:bounds));
+    edmHeat.setData(itemsToHeat(e2, (activeTab==='edm')?bounds:bounds));
+    // lists
+    renderList(e1, listEV, bounds);
+    renderList(e2, listEDM, bounds);
+    STATUS.textContent = `Electric Vibes • showing ${e1.length} EV • ${e2.length} Top sources`;
+  }
+
+  renderChips();
+  map.on('moveend zoomend', refreshAll);
+  // initial data from globals (or sample)
+  if(!window.EV_ITEMS){ window.EV_ITEMS = []; }
+  if(!window.EDM_NEARBY && window.edm_nearby){ window.EDM_NEARBY = window.edm_nearby; }
+  EV_ITEMS = window.EV_ITEMS.slice();
+  EDM_ITEMS = (window.EDM_NEARBY||[]).slice();
+
+  refreshAll();
 })();
-</script>
