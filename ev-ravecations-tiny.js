@@ -1,155 +1,179 @@
-// 04_js.html: paste this right under the HTML (same Code Block) or Page Footer
+<!-- 04_page_js.html: paste this immediately under 03_page_html.html in the SAME Code Block -->
+<script>
 (function(){
   const MT_KEY = (window.MAPTILER_KEY||"").trim();
   const STATUS = document.getElementById('ev-status');
   const chipsBox = document.getElementById('ev-chips');
   const listEV = document.getElementById('ev-list-ev');
   const listEDM = document.getElementById('ev-list-edm');
+  const tabEV = document.getElementById('ev-tab-ev');
+  const tabEDM = document.getElementById('ev-tab-edm');
 
+  // Regions (loose bounds)
   const REGIONS = [
-    {k:'na', n:'North America',   b:[[7,-169],[83,-52]]},
-    {k:'latam', n:'Latin America', b:[[-56,-118],[33,-32]]},
-    {k:'eu', n:'Europe',          b:[[34,-31],[72,45]]},
-    {k:'me', n:'Middle East',     b:[[12,25],[42,63]]},
-    {k:'af', n:'Africa',          b:[[-36,-20],[38,52]]},
-    {k:'apac', n:'Asia-Pacific',  b:[[-49,63],[63,179]]},
+    {k:'na',    n:'North America',   b:[[7,-169],[83,-52]]},
+    {k:'latam', n:'Latin America',   b:[[-56,-118],[33,-32]]},
+    {k:'eu',    n:'Europe',          b:[[34,-31],[72,45]]},
+    {k:'me',    n:'Middle East',     b:[[12,25],[42,63]]},
+    {k:'af',    n:'Africa',          b:[[-36,-20],[38,52]]},
+    {k:'apac',  n:'Asia-Pacific',    b:[[-49,63],[63,179]]},
   ];
 
-  function fmtDate(s){ if(!s) return ''; return new Date(s).toLocaleDateString(); }
-
-  // Create map
+  // Map init (dark, minimal labels)
   const map = L.map('ev-map',{zoomControl:true, worldCopyJump:true, minZoom:2});
   const style = "https://api.maptiler.com/maps/backdrop-dark/256/{z}/{x}/{y}.png?key="+encodeURIComponent(MT_KEY||"");
   L.tileLayer(style, { attribution:'<a>Leaflet</a> | © MapTiler © OpenStreetMap' }).addTo(map);
-  map.setView([20,0], 2);
+  map.setView([22,0], 2);
 
-  // Heatmaps
+  // Heatmap config — brighter and larger by default
   const heatCfg = {
-    radius: 24, maxOpacity: 0.55, minOpacity: 0.2, blur: 0.85,
+    radius: 32, maxOpacity: 0.7, minOpacity: 0.25, blur: 0.85,
     scaleRadius: true, useLocalExtrema: false,
     latField: 'lat', lngField:'lng', valueField:'count'
   };
   const evHeat = new HeatmapOverlay(heatCfg).addTo(map);
-  const edmHeat = new HeatmapOverlay(heatCfg); // added when tab is switched
+  const edmHeat = new HeatmapOverlay(heatCfg); // only added in "All EDM" tab
 
-  // Data holders
-  let EV_ITEMS = (window.EV_ITEMS||[]).slice();
-  let EDM_ITEMS = (window.EDM_NEARBY||window.edm_nearby||[]).slice();
+  // Data (clone from globals or start empty)
+  let EV_ITEMS = Array.isArray(window.EV_ITEMS) ? window.EV_ITEMS.slice() : [];
+  let EDM_ITEMS = Array.isArray(window.EDM_NEARBY||window.edm_nearby) ? (window.EDM_NEARBY||window.edm_nearby).slice() : [];
   let activeTab = 'ev'; // 'ev' | 'edm'
 
-  // Expose public helpers
-  window.EV_MAP = {
-    setEV(arr){ EV_ITEMS = Array.isArray(arr)?arr:[]; refreshAll(); },
-    setEDM(arr){ EDM_ITEMS = Array.isArray(arr)?arr:[]; refreshAll(); },
-    refreshLists(){ refreshAll(); }
-  };
+  // Helpers
+  const fmtDate = s => s ? new Date(s).toLocaleDateString() : '';
+  const inBounds = (lat,lng,b) => b ? b.contains([lat,lng]) : true;
+  const el = (t, c, txt) => { const e=document.createElement(t); if(c)e.className=c; if(txt!=null)e.textContent=txt; return e; };
+  const debounce = (fn,ms=220)=>{ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn.apply(null,a),ms); }};
 
-  // Region chips
+  // Build region chips
   function renderChips(){
-    chipsBox.innerHTML = '';
-    for(const r of REGIONS){
-      const btn = document.createElement('button');
-      btn.className = 'ev-chip'; btn.textContent = r.n;
-      btn.addEventListener('click', ()=>{
-        map.fitBounds(r.b);
-        setActiveChip(r.k);
-      });
-      btn.dataset.k = r.k;
-      chipsBox.appendChild(btn);
-    }
+    chipsBox.innerHTML = "";
+    REGIONS.forEach(r => {
+      const b = document.createElement('button');
+      b.className = 'ev-chip';
+      b.textContent = r.n;
+      b.addEventListener('click', ()=> map.fitBounds(r.b));
+      chipsBox.appendChild(b);
+    });
     const reset = document.createElement('button');
-    reset.className = 'ev-chip'; reset.textContent = 'Reset';
-    reset.addEventListener('click', ()=>{ map.setView([20,0],2); setActiveChip(null); });
+    reset.className='ev-chip'; reset.textContent='Reset';
+    reset.addEventListener('click', ()=> map.setView([22,0],2));
     chipsBox.appendChild(reset);
   }
-  function setActiveChip(k){
-    [...chipsBox.querySelectorAll('.ev-chip')].forEach(b=>{
-      b.classList.toggle('active', b.dataset.k===k);
-    });
-  }
+  renderChips();
 
   // Tabs
-  const tabEV = document.getElementById('ev-tab-ev');
-  const tabEDM = document.getElementById('ev-tab-edm');
-  tabEV.addEventListener('click', ()=>{ activeTab='ev'; tabEV.classList.add('active'); tabEDM.classList.remove('active'); map.removeLayer(edmHeat); if(!map.hasLayer(evHeat)) evHeat.addTo(map); refreshAll(); });
-  tabEDM.addEventListener('click', ()=>{ activeTab='edm'; tabEDM.classList.add('active'); tabEV.classList.remove('active'); map.removeLayer(evHeat); if(!map.hasLayer(edmHeat)) edmHeat.addTo(map); refreshAll(); });
+  function activateEV(){
+    activeTab='ev';
+    tabEV.classList.add('active'); tabEDM.classList.remove('active');
+    if(map.hasLayer(edmHeat)) map.removeLayer(edmHeat);
+    if(!map.hasLayer(evHeat)) evHeat.addTo(map);
+    refreshAll();
+  }
+  function activateEDM(){
+    activeTab='edm';
+    tabEDM.classList.add('active'); tabEV.classList.remove('active');
+    if(map.hasLayer(evHeat)) map.removeLayer(evHeat);
+    if(!map.hasLayer(edmHeat)) edmHeat.addTo(map);
+    refreshAll();
+  }
+  tabEV.addEventListener('click', activateEV);
+  tabEDM.addEventListener('click', activateEDM);
 
-  // Geocode: if item has loc but no g, resolve via MapTiler
+  // Geocode items that only have loc:"City, Country"
   async function geocodeIfNeeded(items){
     const out=[];
     for(const it of items){
-      if(it.g && it.g.length===2){ out.push({...it, _lat:it.g[0], _lng:it.g[1]}); continue; }
-      if(it.loc && MT_KEY){
-        try {
+      if(it && Array.isArray(it.g) && it.g.length===2){
+        out.push({...it, _lat:it.g[0], _lng:it.g[1]}); continue;
+      }
+      if(it && it.loc && MT_KEY){
+        try{
           const url = `https://api.maptiler.com/geocoding/${encodeURIComponent(it.loc)}.json?limit=1&key=${MT_KEY}`;
-          const res = await fetch(url); if(!res.ok) throw new Error('geo http '+res.status);
-          const js = await res.json();
+          const r = await fetch(url); if(!r.ok) throw new Error("geo "+r.status);
+          const js = await r.json();
           const f = (js.features||[])[0];
           if(f){ const [lng,lat] = f.center; out.push({...it, _lat:lat, _lng:lng}); continue; }
-        }catch(e){ console.warn('geocode fail', it.loc, e); }
+        }catch(err){ console.warn("Geocode failed:", it.loc, err); }
       }
-      out.push(it); // still push; will be filtered later
+      out.push(it);
     }
     return out;
   }
 
-  function inBounds(lat,lng,b){ if(!b) return true; return b.contains([lat,lng]); }
-
   function itemsToHeat(items, bounds){
-    const pts = [];
+    const pts=[];
     for(const it of items){
-      const lat = it._lat ?? (it.g?it.g[0]:undefined);
-      const lng = it._lng ?? (it.g?it.g[1]:undefined);
+      const lat = it._lat ?? (Array.isArray(it.g)? it.g[0]: null);
+      const lng = it._lng ?? (Array.isArray(it.g)? it.g[1]: null);
       if(lat==null || lng==null) continue;
       if(bounds && !inBounds(lat,lng,bounds)) continue;
       pts.push({lat, lng, count: 1});
     }
-    return { max: 8, data: pts };
+    // If very few points, still show gentle hint
+    return { max: Math.max(6, pts.length||6), data: pts };
   }
 
-  function renderList(items, el, bounds){
+  function renderList(items, target, bounds){
     const frag = document.createDocumentFragment();
     let shown=0;
-    for(const it of items){
-      const lat = it._lat ?? (it.g?it.g[0]:undefined);
-      const lng = it._lng ?? (it.g?it.g[1]:undefined);
+    const sorted = items.slice().sort((a,b)=> (new Date(b.d||0)) - (new Date(a.d||0)));
+    for(const it of sorted){
+      const lat = it._lat ?? (Array.isArray(it.g)? it.g[0]: null);
+      const lng = it._lng ?? (Array.isArray(it.g)? it.g[1]: null);
       if(lat!=null && lng!=null && bounds && !inBounds(lat,lng,bounds)) continue;
-      const div = document.createElement('div'); div.className='ev-item';
-      const a = document.createElement('a'); a.href = it.u; a.textContent = it.t||'(no title)';
-      a.target = it.u.startsWith('http')? '_blank':'_self';
-      const small = document.createElement('small');
-      const right = it.d? (' • '+fmtDate(it.d)) : (it.age? (' • '+it.age):'');
-      small.textContent = (it.tag||it.loc||'') + right;
-      div.appendChild(a); div.appendChild(document.createElement('br')); div.appendChild(small);
-      frag.appendChild(div);
-      shown++;
-      if(shown>=20) break;
+      const row = el('div','ev-item');
+      const a = el('a',null,it.t||'(untitled)'); a.href = it.u||'#'; a.target = (it.u||'').startsWith('http')? '_blank':'_self';
+      const meta = el('small',null, (it.tag||it.loc||'(location)') + (it.d? (' • '+fmtDate(it.d)) : (it.age? (' • '+it.age):'')));
+      row.appendChild(a); row.appendChild(el('br')); row.appendChild(meta);
+      frag.appendChild(row);
+      shown++; if(shown>=24) break;
     }
-    el.innerHTML=''; el.appendChild(frag);
+    target.innerHTML=''; target.appendChild(frag);
+    if(shown===0){
+      target.innerHTML = '<small style="opacity:.8">No items in this view yet — zoom or pan the map, or add a few items.</small>';
+    }
   }
 
   async function refreshAll(){
-    STATUS.textContent = `Ravecations Map • loading…`;
-    // geocode as needed (cache per run)
+    STATUS.textContent = 'Ravecations • rendering…';
     const e1 = await geocodeIfNeeded(EV_ITEMS);
     const e2 = await geocodeIfNeeded(EDM_ITEMS);
-    const bounds = map.getBounds();
+    const b = map.getBounds();
     // heatmaps
-    evHeat.setData(itemsToHeat(e1, (activeTab==='ev')?bounds:bounds));
-    edmHeat.setData(itemsToHeat(e2, (activeTab==='edm')?bounds:bounds));
-    // lists
-    renderList(e1, listEV, bounds);
-    renderList(e2, listEDM, bounds);
+    if(activeTab==='ev'){
+      evHeat.setData(itemsToHeat(e1,b));
+    }else{
+      edmHeat.setData(itemsToHeat(e2,b));
+    }
+    // lists (always two columns, filtered by current bounds)
+    renderList(e1, listEV, b);
+    renderList(e2, listEDM, b);
     STATUS.textContent = `Electric Vibes • showing ${e1.length} EV • ${e2.length} Top sources`;
   }
 
-  renderChips();
-  map.on('moveend zoomend', refreshAll);
-  // initial data from globals (or sample)
-  if(!window.EV_ITEMS){ window.EV_ITEMS = []; }
-  if(!window.EDM_NEARBY && window.edm_nearby){ window.EDM_NEARBY = window.edm_nearby; }
-  EV_ITEMS = window.EV_ITEMS.slice();
-  EDM_ITEMS = (window.EDM_NEARBY||[]).slice();
+  // Public helpers
+  window.EV_MAP = {
+    setEV(arr){ EV_ITEMS = Array.isArray(arr)? arr.slice(): []; refreshAll(); },
+    setEDM(arr){ EDM_ITEMS = Array.isArray(arr)? arr.slice(): []; refreshAll(); },
+    refreshLists(){ refreshAll(); },
+    // Optional: seed from your own on-site search pages (simple, best-effort)
+    async seedFromSearch(queries=[]){
+      const make = (q,u) => ({t:`${q} — search result`, u, loc:q, d:new Date().toISOString().slice(0,10)});
+      const add = [];
+      for(const q of queries){
+        try{
+          const url = `/search?q=${encodeURIComponent(q)}`;
+          add.push(make(q, url));
+        }catch(e){ console.warn('seedFromSearch', q, e); }
+      }
+      EV_ITEMS = EV_ITEMS.concat(add);
+      refreshAll();
+    }
+  };
 
+  // Initial render + listeners
+  map.on('moveend zoomend', debounce(refreshAll, 120));
   refreshAll();
 })();
+</script>
