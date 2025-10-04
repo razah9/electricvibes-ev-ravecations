@@ -1,7 +1,7 @@
-<!-- 04_page_js.html: paste this immediately under 03_page_html.html in the SAME Code Block -->
+<!-- 04_page_js.html: paste this immediately under 03_page_html.html (same Code Block) -->
 <script>
 (function(){
-  const MT_KEY = (window.MAPTILER_KEY||"").trim();
+  const MT_KEY = (window.MAPTILER_KEY||"DNfkSierWr0aHJV98uHj").trim();
   const STATUS = document.getElementById('ev-status');
   const chipsBox = document.getElementById('ev-chips');
   const listEV = document.getElementById('ev-list-ev');
@@ -157,13 +157,12 @@
     setEV(arr){ EV_ITEMS = Array.isArray(arr)? arr.slice(): []; refreshAll(); },
     setEDM(arr){ EDM_ITEMS = Array.isArray(arr)? arr.slice(): []; refreshAll(); },
     refreshLists(){ refreshAll(); },
-    // Optional: seed from your own on-site search pages (simple, best-effort)
     async seedFromSearch(queries=[]){
-      const make = (q,u) => ({t:`${q} — search result`, u, loc:q, d:new Date().toISOString().slice(0,10)});
+      const make = (q,u) => ({t:\`\${q} — search result\`, u, loc:q, d:new Date().toISOString().slice(0,10)});
       const add = [];
       for(const q of queries){
         try{
-          const url = `/search?q=${encodeURIComponent(q)}`;
+          const url = \`/search?q=\${encodeURIComponent(q)}\`;
           add.push(make(q, url));
         }catch(e){ console.warn('seedFromSearch', q, e); }
       }
